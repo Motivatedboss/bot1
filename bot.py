@@ -18,6 +18,9 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+import openai
+openai.api_key = OPENAI_API_KEY
+
 # Flask-приложение
 flask_app = Flask(__name__)
 
@@ -62,11 +65,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         # Выбранная тема
-        selected = text.strip()
-        if selected in topics:
-            await update.message.reply_text(f"Ты выбрал тему: {selected}\n(Здесь будет ответ по теме позже)")
-        else:
-            await update.message.reply_text("Пожалуйста, выбери одну из тем с клавиатуры.")
+        if text in topics:
+    selected_topic = text[3:]  # убираем "1. "
+    dob = user_data.get(user_id, "неизвестна")
+    prompt = (
+        f"Ты — профессиональный астролог. Пользователь родился {dob}. "
+        f"Дай подробный, дружелюбный и полезный астрологический совет по теме: '{selected_topic}'."
+    )
+
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "Ты — астролог-бот."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=700
+        )
+        reply_text = response.choices[0].message.content
+    except Exception as e:
+        reply_text = "Произошла ошибка при обращении к OpenAI 😔"
+
+    await update.message.reply_text(reply_text)
 
 # Обработка Telegram webhook
 @flask_app.route("/webhook", methods=["POST"])
