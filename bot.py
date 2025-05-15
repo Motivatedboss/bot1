@@ -66,28 +66,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         # Выбранная тема
         if text in topics:
-    selected_topic = text[3:]  # убираем "1. "
-    dob = user_data.get(user_id, "неизвестна")
-    prompt = (
-        f"Ты — профессиональный астролог. Пользователь родился {dob}. "
-        f"Дай подробный, дружелюбный и полезный астрологический совет по теме: '{selected_topic}'."
-    )
+            selected_topic = text[3:]  # убираем "1. "
+            dob = user_data.get(user_id, "неизвестна")
+            prompt = (
+                f"Ты — профессиональный астролог. Пользователь родился {dob}. "
+                f"Дай подробный, дружелюбный и полезный астрологический совет по теме: '{selected_topic}'."
+            )
 
-    try:
-        response = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "Ты — астролог-бот."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=700
-        )
-        reply_text = response.choices[0].message.content
-    except Exception as e:
-        reply_text = "Произошла ошибка при обращении к OpenAI 😔"
+            try:
+                response = openai.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "Ты — астролог-бот."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=700
+                )
+                reply_text = response.choices[0].message.content
+            except Exception as e:
+                reply_text = "Произошла ошибка при обращении к OpenAI 😔"
 
-    await update.message.reply_text(reply_text)
+            await update.message.reply_text(reply_text)
+        else:
+            await update.message.reply_text("Пожалуйста, выбери тему из предложенного списка.")
 
 # Обработка Telegram webhook
 @flask_app.route("/webhook", methods=["POST"])
