@@ -1,6 +1,7 @@
 import os
 from flask import Flask, request
 from dotenv import load_dotenv
+import openai
 
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -17,19 +18,13 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-import openai
 openai.api_key = OPENAI_API_KEY
-if not OPENAI_API_KEY:
-    print("❌ OPENAI_API_KEY is missing!")
 
 # Flask-приложение
 flask_app = Flask(__name__)
 
 # Telegram-приложение
 application = Application.builder().token(TOKEN).build()
-
-# Простая логика обработки сообщений
 
 # Словарь для хранения даты рождения пользователей
 user_data = {}
@@ -47,7 +42,11 @@ topics = [
     "9. Меня интересует всё",
 ]
 
-# Стартовая команда
+# Команда /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! Я астробот.\nНапиши, пожалуйста, свою дату рождения (в формате ДД.ММ.ГГГГ):")
+
+# Обработка сообщений
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
@@ -61,7 +60,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         if text in topics:
-            selected_topic = text[3:]  # убираем "1. "
+            selected_topic = text[3:]
             dob = user_data.get(user_id, "неизвестна")
             prompt = (
                 f"Ты — профессиональный астролог. Пользователь родился {dob}. "
@@ -79,7 +78,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     max_tokens=700
                 )
                 reply_text = response["choices"][0]["message"]["content"]
-
             except Exception as e:
                 print(f"Ошибка OpenAI: {e}")
                 reply_text = "Произошла ошибка при обращении к OpenAI 😔"
@@ -87,19 +85,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(reply_text)
         else:
             await update.message.reply_text("Пожалуйста, выбери тему из предложенного списка.")
-# Обработка Telegram webhook
+
+# Webhook
 @flask_app.route("/webhook", methods=["POST"])
 def webhook() -> str:
     update = Update.de_json(request.get_json(force=True), application.bot)
     application.update_queue.put(update)
     return "OK", 200
 
-# Проверка работоспособности сервиса
 @flask_app.route("/", methods=["GET"])
 def index() -> str:
     return "Бот работает.", 200
 
-# Подключаем обработчики
+# Регистрируем хендлеры
 application.add_handler(CommandHandler("start", start))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
@@ -107,7 +105,7 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_m
 if __name__ == "__main__":
     print("Запуск бота с webhook...")
     application.run_webhook(
-    listen="0.0.0.0",
-    port=int(os.environ.get("PORT", 5000)),
-    webhook_url=WEBHOOK_URL
-)
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000)),
+        webhook_url=WEBHOOK_URL
+    )
