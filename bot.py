@@ -86,9 +86,9 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_m
 
 # Запуск в режиме webhook
 if __name__ == "__main__":
-    print("Starting bot with webhook...")
+    print("Запуск бота с webhook...")
     application.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get("PORT", 5000)),
-        webhook_url=WEBHOOK_URL
-
+    listen="0.0.0.0",
+    port=int(os.environ.get("PORT", 5000)),
+    webhook_url=WEBHOOK_URL
+)
