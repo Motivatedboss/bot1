@@ -86,6 +86,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     max_tokens=700
                 )
                 reply_text = response["choices"][0]["message"]["content"]
+                print("OpenAI ответ:", response)
             except Exception as e:
                 traceback.print_exc()
                 reply_text = "Произошла ошибка при обращении к OpenAI 😔"
