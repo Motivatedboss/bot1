@@ -1,9 +1,8 @@
 import os
 import traceback
-import asyncio
+import aiohttp
 from flask import Flask, request
 from dotenv import load_dotenv
-from openai import OpenAI
 
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -14,14 +13,12 @@ from telegram.ext import (
     filters,
 )
 
-# Загрузка переменных окружения
 load_dotenv()
+
+# Переменные окружения
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# Настройка OpenAI клиента
-client = OpenAI(api_key=OPENAI_API_KEY)
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 # Flask-приложение
 flask_app = Flask(__name__)
@@ -29,7 +26,7 @@ flask_app = Flask(__name__)
 # Telegram-приложение
 application = Application.builder().token(TOKEN).build()
 
-# Данные пользователя
+# Данные пользователей
 user_data = {}
 
 # Темы
@@ -45,7 +42,7 @@ topics = [
     "9. Меня интересует всё",
 ]
 
-# /start команда
+# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Привет! Я астробот.\nНапиши, пожалуйста, свою дату рождения (в формате ДД.ММ.ГГГГ):")
 
@@ -63,7 +60,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         if text in topics:
-            selected_topic = text[3:]
+            selected_topic = text[3:]  # убираем номер
             dob = user_data.get(user_id, "неизвестна")
             prompt = (
                 f"Ты — профессиональный астролог. Пользователь родился {dob}. "
@@ -71,42 +68,52 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             try:
-                loop = asyncio.get_event_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: client.chat.completions.create(
-                        model="gpt-3.5-turbo",
-                        messages=[
-                            {"role": "system", "content": "Ты — астролог-бот."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        temperature=0.7,
-                        max_tokens=700
-                    )
-                )
-                reply_text = response.choices[0].message.content
+                url = "https://openrouter.ai/api/v1/chat/completions"
+                headers = {
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://yourdomain.com",  # при необходимости укажи свой сайт
+                    "X-Title": "AstroBot"
+                }
+                payload = {
+                    "model": "openai/gpt-3.5-turbo",  # можно сменить на любую доступную модель OpenRouter
+                    "messages": [
+                        {"role": "system", "content": "Ты — астролог-бот."},
+                        {"role": "user", "content": prompt}
+                    ]
+                }
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, headers=headers, json=payload) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            reply_text = data["choices"][0]["message"]["content"]
+                        else:
+                            error = await resp.text()
+                            print("Ошибка OpenRouter:", error)
+                            reply_text = "Произошла ошибка при обращении к OpenRouter 😔"
 
             except Exception as e:
                 traceback.print_exc()
-                reply_text = "Произошла ошибка при обращении к OpenAI 😔"
+                reply_text = "Произошла непредвиденная ошибка 😢"
 
             await update.message.reply_text(reply_text)
         else:
             await update.message.reply_text("Пожалуйста, выбери тему из предложенного списка.")
 
-# Webhook от Telegram
+# Webhook для Telegram
 @flask_app.route("/webhook", methods=["POST"])
 def webhook() -> str:
     update = Update.de_json(request.get_json(force=True), application.bot)
     application.update_queue.put(update)
     return "OK", 200
 
-# Проверка доступности
+# Проверка статуса
 @flask_app.route("/", methods=["GET"])
 def index() -> str:
     return "Бот работает.", 200
 
-# Обработчики команд
+# Хендлеры
 application.add_handler(CommandHandler("start", start))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
