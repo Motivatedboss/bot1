@@ -3,6 +3,7 @@ import traceback
 from flask import Flask, request
 from dotenv import load_dotenv
 import openai
+import asyncio
 
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -76,7 +77,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             try:
-                response = openai.ChatCompletion.create(
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                   None,
+                lambda: openai.ChatCompletion.create(
                     model="gpt-3.5-turbo",
                     messages=[
                         {"role": "system", "content": "Ты — астролог-бот."},
@@ -84,9 +88,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ],
                     temperature=0.7,
                     max_tokens=700
-                )
-                reply_text = response["choices"][0]["message"]["content"]
-                print("OpenAI ответ:", response)
+
+                 )
+             )
+                 print("OpenAI ответ:", response)
+                 reply_text = response["choices"][0]["message"]["content"]
             except Exception as e:
                 traceback.print_exc()
                 reply_text = "Произошла ошибка при обращении к OpenAI 😔"
