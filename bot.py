@@ -19,6 +19,7 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY
+print("OPENAI_API_KEY:", OPENAI_API_KEY)
 
 # Flask-приложение
 flask_app = Flask(__name__)
@@ -78,9 +79,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     max_tokens=700
                 )
                 reply_text = response["choices"][0]["message"]["content"]
-            except Exception as e:
-                print(f"Ошибка OpenAI: {e}")
-                reply_text = "Произошла ошибка при обращении к OpenAI 😔"
+            import traceback
+except Exception as e:
+    traceback.print_exc()
+    reply_text = "Произошла ошибка при обращении к OpenAI 😔"
 
             await update.message.reply_text(reply_text)
         else:
