@@ -1,18 +1,18 @@
+import os
 import swisseph as swe
 from datetime import datetime
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
-from flask import Flask
-import threading
+from telegram import Update, Bot
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from flask import Flask, request
 
-# Установка эфемерид
-swe.set_ephe_path("./ephe")  # Убедитесь, что в папке ./ephe есть файлы эфемерид
+# Настройки эфемерид
+swe.set_ephe_path("./ephe")
 
 # Константы
 PLANETS = [
     swe.SUN, swe.MOON, swe.MERCURY, swe.VENUS, swe.MARS,
     swe.JUPITER, swe.SATURN, swe.URANUS, swe.NEPTUNE, swe.PLUTO,
-    swe.MEAN_NODE  # Раху
+    swe.MEAN_NODE
 ]
 ASPECTS = {
     "Conjunction": 0,
@@ -21,14 +21,12 @@ ASPECTS = {
     "Square": 90,
     "Sextile": 60
 }
-ASPECT_ORB = 6  # Орбис для мажорных аспектов
-
-# Интерпретации (сокращённо)
-PLANET_HOUSE_MEANINGS = {"Sun": [...], "Moon": [...], "Mercury": [...], "Venus": [...], "Mars": [...], "Jupiter": [...], "Saturn": [...], "Mean Node": [...], "Rahu": [...], "Ketu": ["Потеря эго и переоценка личности.", ..., "Духовное очищение и отказ от иллюзий."]}
-HOUSE_MEANINGS = ["Личность, внешность, восприятие мира.", ..., "Подсознание, уединение, тайны, духовность."]
-ZODIAC_SIGNS = ["Овен", ..., "Рыбы"]
-ZODIAC_MEANINGS = ["Овен: энергичность...", ..., "Рыбы: мечтательность..."]
-PLANET_SIGN_MEANINGS = {"Sun": ZODIAC_MEANINGS, "Moon": ZODIAC_MEANINGS, "Mercury": ZODIAC_MEANINGS, "Venus": ZODIAC_MEANINGS, "Mars": ZODIAC_MEANINGS, "Jupiter": ZODIAC_MEANINGS, "Saturn": ZODIAC_MEANINGS, "Uranus": ZODIAC_MEANINGS, "Neptune": ZODIAC_MEANINGS, "Pluto": ZODIAC_MEANINGS, "Rahu": ZODIAC_MEANINGS, "Ketu": ZODIAC_MEANINGS}
+ASPECT_ORB = 6
+ZODIAC_SIGNS = ["Овен", "Телец", "Близнецы", "Рак", "Лев", "Дева", "Весы", "Скорпион", "Стрелец", "Козерог", "Водолей", "Рыбы"]
+ZODIAC_MEANINGS = ["Овен: энергичность", "Телец: стабильность", "Близнецы: любознательность", "Рак: чувствительность", "Лев: уверенность", "Дева: аналитичность", "Весы: гармония", "Скорпион: страстность", "Стрелец: философичность", "Козерог: целеустремлённость", "Водолей: оригинальность", "Рыбы: мечтательность"]
+PLANET_SIGN_MEANINGS = {planet: ZODIAC_MEANINGS for planet in ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Rahu", "Ketu"]}
+HOUSE_MEANINGS = [f"Интерпретация дома {i+1}" for i in range(12)]
+PLANET_HOUSE_MEANINGS = {planet: HOUSE_MEANINGS for planet in PLANET_SIGN_MEANINGS}
 
 def calculate_chart(year, month, day, hour, minute, latitude, longitude):
     jd_ut = swe.julday(year, month, day, hour + minute / 60.0)
@@ -86,10 +84,13 @@ def calculate_chart(year, month, day, hour, minute, latitude, longitude):
         "\nДома:", *house_interpretations
     ])
 
-# --- Telegram Bot ---
+# Telegram bot + Flask webhook
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+BOT = Bot(token=TOKEN)
+app = Application.builder().token(TOKEN).build()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Отправьте данные в формате: \nГГГГ-ММ-ДД ЧЧ:ММ Широта Долгота\nПример: 1990-05-10 14:30 55.75 37.6")
+    await update.message.reply_text("Отправьте данные в формате: ГГГГ-ММ-ДД ЧЧ:ММ Широта Долгота\nПример: 1990-05-10 14:30 55.75 37.6")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -103,29 +104,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}\nУбедитесь, что вы ввели данные в правильном формате.")
 
-# --- Flask fake server for Render ---
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+# Flask setup
 flask_app = Flask(__name__)
 
-@flask_app.route("/")
-def home():
-    return "Telegram bot is running"
+@flask_app.route("/", methods=["GET"])
+def index():
+    return "Бот работает."
 
-def run_flask():
-    flask_app.run(host="0.0.0.0", port=8080)
+@flask_app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), BOT)
+    app.update_queue.put_nowait(update)
+    return "ok"
 
-# --- Запуск Telegram-бота и Flask одновременно ---
 if __name__ == "__main__":
-    import os
     import asyncio
     from dotenv import load_dotenv
     load_dotenv()
-    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-    threading.Thread(target=run_flask).start()
+    # Установка вебхука
+    import requests
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+    requests.get(f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={WEBHOOK_URL}/{TOKEN}")
 
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    print("Бот запущен...")
-    asyncio.run(app.run_polling())
+    print("Запуск Flask-сервера...")
+    flask_app.run(host="0.0.0.0", port=8080)

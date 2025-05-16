@@ -1,5 +1,5 @@
-python-telegram-bot==20.3
-pyswisseph
+python-telegram-bot==20.0
+Flask
+pyephem
+swisseph
 python-dotenv
-aiohttp
-flask
