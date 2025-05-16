@@ -1,0 +1,10 @@
+services:
+  - type: worker
+    name: telegram-astro-bot
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python bot.py"
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false  # Значит, ты задашь значение вручную через интерфейс Render

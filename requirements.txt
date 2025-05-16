@@ -1,7 +1,3 @@
-python-telegram-bot[webhooks]==20.7
-aiohttp>=3.9.0
-Flask>=2.3.0
-python-dotenv>=1.0.0
-flatlib
-geopy
-pytz
+python-telegram-bot==20.3
+pyswisseph
+python-dotenv
