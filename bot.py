@@ -3,7 +3,7 @@ import traceback
 import asyncio
 from flask import Flask, request
 from dotenv import load_dotenv
-import openai
+from openai import OpenAI
 
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -19,7 +19,9 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-openai.api_key = OPENAI_API_KEY
+
+# Настройка OpenAI клиента
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Flask-приложение
 flask_app = Flask(__name__)
@@ -27,7 +29,7 @@ flask_app = Flask(__name__)
 # Telegram-приложение
 application = Application.builder().token(TOKEN).build()
 
-# Словарь для хранения даты рождения пользователей
+# Данные пользователя
 user_data = {}
 
 # Темы
@@ -43,7 +45,7 @@ topics = [
     "9. Меня интересует всё",
 ]
 
-# Команда /start
+# /start команда
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Привет! Я астробот.\nНапиши, пожалуйста, свою дату рождения (в формате ДД.ММ.ГГГГ):")
 
@@ -72,7 +74,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 loop = asyncio.get_event_loop()
                 response = await loop.run_in_executor(
                     None,
-                    lambda: openai.ChatCompletion.create(
+                    lambda: client.chat.completions.create(
                         model="gpt-3.5-turbo",
                         messages=[
                             {"role": "system", "content": "Ты — астролог-бот."},
@@ -82,8 +84,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         max_tokens=700
                     )
                 )
-                print("OpenAI ответ:", response)
-                reply_text = response["choices"][0]["message"]["content"]
+                reply_text = response.choices[0].message.content
+
             except Exception as e:
                 traceback.print_exc()
                 reply_text = "Произошла ошибка при обращении к OpenAI 😔"
@@ -92,22 +94,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("Пожалуйста, выбери тему из предложенного списка.")
 
-# Webhook
+# Webhook от Telegram
 @flask_app.route("/webhook", methods=["POST"])
 def webhook() -> str:
     update = Update.de_json(request.get_json(force=True), application.bot)
     application.update_queue.put(update)
     return "OK", 200
 
+# Проверка доступности
 @flask_app.route("/", methods=["GET"])
 def index() -> str:
     return "Бот работает.", 200
 
-# Регистрируем хендлеры
+# Обработчики команд
 application.add_handler(CommandHandler("start", start))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# Запуск в режиме webhook
+# Запуск
 if __name__ == "__main__":
     print("Запуск бота с webhook...")
     application.run_webhook(
