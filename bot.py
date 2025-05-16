@@ -1,20 +1,14 @@
-import os
-import asyncio
 import swisseph as swe
 from datetime import datetime
-from aiohttp import web
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
-from dotenv import load_dotenv
+from flask import Flask
+import threading
 
-# Загрузка переменных окружения
-load_dotenv()
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# Установка эфемерид
+swe.set_ephe_path("./ephe")  # Убедитесь, что в папке ./ephe есть файлы эфемерид
 
-# Установка пути к эфемеридам
-swe.set_ephe_path("./ephe")
-
-# Планеты и константы
+# Константы
 PLANETS = [
     swe.SUN, swe.MOON, swe.MERCURY, swe.VENUS, swe.MARS,
     swe.JUPITER, swe.SATURN, swe.URANUS, swe.NEPTUNE, swe.PLUTO,
@@ -27,18 +21,14 @@ ASPECTS = {
     "Square": 90,
     "Sextile": 60
 }
-ASPECT_ORB = 6
+ASPECT_ORB = 6  # Орбис для мажорных аспектов
 
-ZODIAC_SIGNS = [
-    "Овен", "Телец", "Близнецы", "Рак", "Лев", "Дева",
-    "Весы", "Скорпион", "Стрелец", "Козерог", "Водолей", "Рыбы"
-]
-ZODIAC_MEANINGS = [f"{sign}: описание знака..." for sign in ZODIAC_SIGNS]
-
-HOUSE_MEANINGS = [f"Интерпретация дома {i+1}" for i in range(12)]
-PLANET_HOUSE_MEANINGS = {p: HOUSE_MEANINGS for p in ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Rahu", "Ketu"]}
-PLANET_SIGN_MEANINGS = {p: ZODIAC_MEANINGS for p in ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Rahu", "Ketu"]}
-
+# Интерпретации (сокращённо)
+PLANET_HOUSE_MEANINGS = {"Sun": [...], "Moon": [...], "Mercury": [...], "Venus": [...], "Mars": [...], "Jupiter": [...], "Saturn": [...], "Mean Node": [...], "Rahu": [...], "Ketu": ["Потеря эго и переоценка личности.", ..., "Духовное очищение и отказ от иллюзий."]}
+HOUSE_MEANINGS = ["Личность, внешность, восприятие мира.", ..., "Подсознание, уединение, тайны, духовность."]
+ZODIAC_SIGNS = ["Овен", ..., "Рыбы"]
+ZODIAC_MEANINGS = ["Овен: энергичность...", ..., "Рыбы: мечтательность..."]
+PLANET_SIGN_MEANINGS = {"Sun": ZODIAC_MEANINGS, "Moon": ZODIAC_MEANINGS, "Mercury": ZODIAC_MEANINGS, "Venus": ZODIAC_MEANINGS, "Mars": ZODIAC_MEANINGS, "Jupiter": ZODIAC_MEANINGS, "Saturn": ZODIAC_MEANINGS, "Uranus": ZODIAC_MEANINGS, "Neptune": ZODIAC_MEANINGS, "Pluto": ZODIAC_MEANINGS, "Rahu": ZODIAC_MEANINGS, "Ketu": ZODIAC_MEANINGS}
 
 def calculate_chart(year, month, day, hour, minute, latitude, longitude):
     jd_ut = swe.julday(year, month, day, hour + minute / 60.0)
@@ -76,13 +66,13 @@ def calculate_chart(year, month, day, hour, minute, latitude, longitude):
     interpretations = []
     for pname, plon in planets.items():
         sign_index = int(plon // 30)
-        sign = ZODIAC_SIGNS[sign_index]
-        sign_meaning = PLANET_SIGN_MEANINGS[pname][sign_index]
-        interp = f"{pname} в {sign}: {sign_meaning}"
+        sign_meaning = PLANET_SIGN_MEANINGS.get(pname, ZODIAC_MEANINGS)[sign_index]
+        interp = f"{pname} в {ZODIAC_SIGNS[sign_index]}: {sign_meaning}"
         if pname in planet_in_house:
             house = planet_in_house[pname]
-            house_meaning = PLANET_HOUSE_MEANINGS[pname][house - 1]
-            interp += f" | Дом {house}: {house_meaning}"
+            if pname in PLANET_HOUSE_MEANINGS:
+                desc = PLANET_HOUSE_MEANINGS[pname][house - 1]
+                interp += f" | Дом {house}: {desc}"
         interpretations.append(interp)
 
     house_interpretations = [f"Дом {i+1}: {meaning}" for i, meaning in enumerate(HOUSE_MEANINGS)]
@@ -96,11 +86,10 @@ def calculate_chart(year, month, day, hour, minute, latitude, longitude):
         "\nДома:", *house_interpretations
     ])
 
-
-# Telegram handlers
+# --- Telegram Bot ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Введите данные в формате: \nГГГГ-ММ-ДД ЧЧ:ММ Широта Долгота\nПример: 1990-05-10 14:30 55.75 37.6")
+    await update.message.reply_text("Отправьте данные в формате: \nГГГГ-ММ-ДД ЧЧ:ММ Широта Долгота\nПример: 1990-05-10 14:30 55.75 37.6")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -112,29 +101,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         report = calculate_chart(year, month, day, hour, minute, lat, lon)
         await update.message.reply_text(report[:4000])
     except Exception as e:
-        await update.message.reply_text(f"Ошибка: {e}\nФормат: 1990-05-10 14:30 55.75 37.6")
+        await update.message.reply_text(f"Ошибка: {e}\nУбедитесь, что вы ввели данные в правильном формате.")
 
+# --- Flask fake server for Render ---
+flask_app = Flask(__name__)
 
-# Web server for Render
-async def web_handler(request):
-    return web.Response(text="Bot is running.")
+@flask_app.route("/")
+def home():
+    return "Telegram bot is running"
 
-async def start_webserver():
-    app = web.Application()
-    app.router.add_get("/", web_handler)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 10000)))
-    await site.start()
+def run_flask():
+    flask_app.run(host="0.0.0.0", port=8080)
 
-
-# Запуск
-async def main():
-    telegram_app = ApplicationBuilder().token(TOKEN).build()
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    await start_webserver()
-    await telegram_app.run_polling()
-
+# --- Запуск Telegram-бота и Flask одновременно ---
 if __name__ == "__main__":
-    asyncio.run(main())
+    import os
+    import asyncio
+    from dotenv import load_dotenv
+    load_dotenv()
+    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+    threading.Thread(target=run_flask).start()
+
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    print("Бот запущен...")
+    asyncio.run(app.run_polling())
