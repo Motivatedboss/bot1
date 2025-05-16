@@ -60,11 +60,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         if text in topics:
-            selected_topic = text[3:]
+            selected_topic = text[3:]  # убираем номер
             dob = user_data.get(user_id, "неизвестна")
             prompt = (
-                f"Ты — профессиональный астролог. Пользователь родился {dob}. "
-                f"Дай подробный, дружелюбный и полезный астрологический совет по теме: '{selected_topic}'."
+                f"Пользователь родился {dob}. Дай подробный, дружелюбный и полезный астрологический совет по теме: '{selected_topic}'."
             )
 
             try:
@@ -72,20 +71,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 headers = {
                     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                     "Content-Type": "application/json",
-                    # "HTTP-Referer": "https://bot1-fn4q.onrender.com",  # Убери или замени на свой домен
+                    "HTTP-Referer": "https://yourdomain.com",  # можно указать свой домен
                     "X-Title": "AstroBot"
                 }
                 payload = {
-                    "model": "meta-llama/llama-3-8b-instruct",  # Убедись, что модель тебе доступна
+                    "model": "openai/gpt-3.5-turbo",
                     "messages": [
-                        {"role": "system", "content": "Ты — астролог-бот."},
-                        {"role": "user", "content": prompt}
+                        {
+                            "role": "system",
+                            "content": (
+                                "Ты — профессиональный астролог, дающий мудрые, вдохновляющие и структурированные советы на русском языке. "
+                                "Пиши дружелюбным, понятным, но уверенным тоном. Не добавляй технический мусор или HTML."
+                            )
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
                     ]
                 }
 
                 async with aiohttp.ClientSession() as session:
                     async with session.post(url, headers=headers, json=payload) as resp:
-                        print("Статус ответа OpenRouter:", resp.status)
                         if resp.status == 200:
                             data = await resp.json()
                             reply_text = data["choices"][0]["message"]["content"]
@@ -102,13 +109,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("Пожалуйста, выбери тему из предложенного списка.")
 
-# Webhook
+# Webhook для Telegram
 @flask_app.route("/webhook", methods=["POST"])
 def webhook() -> str:
     update = Update.de_json(request.get_json(force=True), application.bot)
     application.update_queue.put(update)
     return "OK", 200
 
+# Проверка статуса
 @flask_app.route("/", methods=["GET"])
 def index() -> str:
     return "Бот работает.", 200
