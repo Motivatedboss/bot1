@@ -1,165 +1,117 @@
-import os
-import traceback
-import aiohttp
-from flask import Flask, request
-from dotenv import load_dotenv
+import swisseph as swe
+from datetime import datetime
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+# Установка эфемерид
+swe.set_ephe_path("./ephe")  # Убедитесь, что в папке ./ephe есть файлы эфемерид
 
-load_dotenv()
-
-# Переменные окружения
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-
-# Flask-приложение
-flask_app = Flask(__name__)
-
-# Telegram-приложение
-application = Application.builder().token(TOKEN).build()
-
-# Данные пользователей
-user_data = {}
-
-# Темы
-topics = [
-    "1. Общая информация о тебе",
-    "2. Тотемное животное",
-    "3. Финансы",
-    "4. Бизнес",
-    "5. Предназначение",
-    "6. Доходы",
-    "7. Отношения",
-    "8. Жизненный период",
-    "9. Меня интересует всё",
+# Константы
+PLANETS = [
+    swe.SUN, swe.MOON, swe.MERCURY, swe.VENUS, swe.MARS,
+    swe.JUPITER, swe.SATURN, swe.URANUS, swe.NEPTUNE, swe.PLUTO,
+    swe.MEAN_NODE  # Раху
 ]
+ASPECTS = {
+    "Conjunction": 0,
+    "Opposition": 180,
+    "Trine": 120,
+    "Square": 90,
+    "Sextile": 60
+}
+ASPECT_ORB = 6  # Орбис для мажорных аспектов
 
-# Отправка длинного сообщения по частям
-async def send_long_message(text, update):
-    MAX_LENGTH = 4096
-    for i in range(0, len(text), MAX_LENGTH):
-        await update.message.reply_text(text[i:i+MAX_LENGTH])
+# Интерпретации (сокращённо)
+PLANET_HOUSE_MEANINGS = {"Sun": [...], "Moon": [...], "Mercury": [...], "Venus": [...], "Mars": [...], "Jupiter": [...], "Saturn": [...], "Mean Node": [...], "Rahu": [...], "Ketu": ["Потеря эго и переоценка личности.", ..., "Духовное очищение и отказ от иллюзий."]}
+HOUSE_MEANINGS = ["Личность, внешность, восприятие мира.", ..., "Подсознание, уединение, тайны, духовность."]
+ZODIAC_SIGNS = ["Овен", ..., "Рыбы"]
+ZODIAC_MEANINGS = ["Овен: энергичность...", ..., "Рыбы: мечтательность..."]
+PLANET_SIGN_MEANINGS = {"Sun": ZODIAC_MEANINGS, ..., "Ketu": ZODIAC_MEANINGS}
 
-# Команда /start
+
+def calculate_chart(year, month, day, hour, minute, latitude, longitude):
+    jd_ut = swe.julday(year, month, day, hour + minute / 60.0)
+    houses, ascmc = swe.houses(jd_ut, latitude, longitude, b"P")
+    swe.set_sid_mode(swe.SIDM_LAHIRI)
+
+    planets = {}
+    for planet in PLANETS:
+        lon, _, _, _ = swe.calc_ut(jd_ut, planet, swe.FLG_SIDEREAL)
+        pname = swe.get_planet_name(planet)
+        if pname == "Mean Node":
+            pname = "Rahu"
+        planets[pname] = lon
+    planets["Ketu"] = (planets["Rahu"] + 180) % 360
+
+    planet_in_house = {}
+    for pname, plon in planets.items():
+        for i in range(12):
+            start = houses[i]
+            end = houses[(i + 1) % 12] + (360 if houses[(i + 1) % 12] < start else 0)
+            if start <= plon < end:
+                planet_in_house[pname] = i + 1
+                break
+
+    planet_aspects = []
+    names = list(planets.keys())
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            angle = abs(planets[names[i]] - planets[names[j]])
+            angle = angle if angle <= 180 else 360 - angle
+            for aspect_name, aspect_angle in ASPECTS.items():
+                if abs(angle - aspect_angle) <= ASPECT_ORB:
+                    planet_aspects.append((names[i], names[j], aspect_name))
+
+    interpretations = []
+    for pname, plon in planets.items():
+        sign_index = int(plon // 30)
+        sign_meaning = PLANET_SIGN_MEANINGS.get(pname, ZODIAC_MEANINGS)[sign_index]
+        interp = f"{pname} в {ZODIAC_SIGNS[sign_index]}: {sign_meaning}"
+        if pname in planet_in_house:
+            house = planet_in_house[pname]
+            if pname in PLANET_HOUSE_MEANINGS:
+                desc = PLANET_HOUSE_MEANINGS[pname][house - 1]
+                interp += f" | Дом {house}: {desc}"
+        interpretations.append(interp)
+
+    house_interpretations = [f"Дом {i+1}: {meaning}" for i, meaning in enumerate(HOUSE_MEANINGS)]
+    asc_sign_index = int(ascmc[0] // 30)
+    asc_house_desc = f"Асцендент: {ZODIAC_SIGNS[asc_sign_index]} — {ZODIAC_MEANINGS[asc_sign_index]}"
+
+    return "\n".join([
+        asc_house_desc,
+        "\n\nПланеты:", *interpretations,
+        "\nАспекты:", *(f"{a[0]} {a[2]} {a[1]}" for a in planet_aspects),
+        "\nДома:", *house_interpretations
+    ])
+
+# --- Telegram Bot ---
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_data[user_id] = {"step": "name"}
-    await update.message.reply_text("Привет! Я астробот.\nКак тебя зовут?")
+    await update.message.reply_text("Отправьте данные в формате: \nГГГГ-ММ-ДД ЧЧ:ММ Широта Долгота\nПример: 1990-05-10 14:30 55.75 37.6")
 
-# Обработка всех сообщений
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text.strip()
-
-    if user_id not in user_data:
-        await start(update, context)
-        return
-
-    state = user_data[user_id]
-
-    if state.get("step") == "name":
-        state["name"] = text
-        state["step"] = "date"
-        await update.message.reply_text("Укажи дату рождения (ДД.ММ.ГГГГ):")
-    elif state.get("step") == "date":
-        state["birth_date"] = text
-        state["step"] = "time"
-        await update.message.reply_text("Теперь время рождения (например, 14:30):")
-    elif state.get("step") == "time":
-        state["birth_time"] = text
-        state["step"] = "place"
-        await update.message.reply_text("Где ты родился? Укажи город или населённый пункт:")
-    elif state.get("step") == "place":
-        state["birth_place"] = text
-        state["step"] = "topic"
-        reply_keyboard = [[topics[i], topics[i + 1], topics[i + 2]] for i in range(0, len(topics), 3)]
-        await update.message.reply_text(
-            "Спасибо! Теперь выбери интересующую тему:",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
-        )
-    elif state.get("step") == "topic":
-        if text in topics:
-            state["selected_topic"] = text[3:]
-            await generate_astrology_response(update, context, user_id)
-        else:
-            await update.message.reply_text("Пожалуйста, выбери тему из списка.")
-    else:
-        await update.message.reply_text("Что-то пошло не так. Напиши /start чтобы начать сначала.")
-
-# Генерация астрологического ответа
-async def generate_astrology_response(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id):
-    state = user_data[user_id]
-    prompt = (
-        f"Ты — профессиональный астролог. Вот данные пользователя:\n"
-        f"Имя: {state['name']}\n"
-        f"Дата рождения: {state['birth_date']}\n"
-        f"Время рождения: {state['birth_time']}\n"
-        f"Место рождения: {state['birth_place']}\n"
-        f"Тема: {state['selected_topic']}\n\n"
-        f"Составь развернутую, дружелюбную, понятную и полезную астрологическую консультацию."
-    )
-
     try:
-        url = "https://openrouter.ai/api/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://yourdomain.com",
-            "X-Title": "AstroBot"
-        }
-        payload = {
-            "model": "meta-llama/llama-3-8b-instruct",
-            "messages": [
-                {"role": "system", "content": "Ты — опытный астролог."},
-                {"role": "user", "content": prompt}
-            ]
-        }
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    reply_text = data["choices"][0]["message"]["content"]
-                else:
-                    error = await resp.text()
-                    print("Ошибка OpenRouter:", error)
-                    reply_text = "Произошла ошибка при обращении к OpenRouter 😔"
-
+        text = update.message.text.strip()
+        dt_str, time_str, lat, lon = text.split()
+        year, month, day = map(int, dt_str.split("-"))
+        hour, minute = map(int, time_str.split(":"))
+        lat, lon = float(lat), float(lon)
+        report = calculate_chart(year, month, day, hour, minute, lat, lon)
+        await update.message.reply_text(report[:4000])
     except Exception as e:
-        traceback.print_exc()
-        reply_text = "Произошла непредвиденная ошибка 😢"
+        await update.message.reply_text(f"Ошибка: {e}\nУбедитесь, что вы ввели данные в правильном формате.")
 
-    await send_long_message(reply_text, update)
-
-# Webhook
-@flask_app.route("/webhook", methods=["POST"])
-def webhook() -> str:
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    application.update_queue.put(update)
-    return "OK", 200
-
-# Проверка
-@flask_app.route("/", methods=["GET"])
-def index() -> str:
-    return "Бот работает.", 200
-
-# Хендлеры
-application.add_handler(CommandHandler("start", start))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-# Запуск
 if __name__ == "__main__":
-    print("Запуск бота с webhook...")
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get("PORT", 5000)),
-        webhook_url=WEBHOOK_URL
-    )
+    import os
+    import asyncio
+    from dotenv import load_dotenv
+    load_dotenv()
+    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    print("Бот запущен...")
+    asyncio.run(app.run_polling())
