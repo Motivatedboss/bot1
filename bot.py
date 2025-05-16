@@ -4,7 +4,7 @@ import aiohttp
 from flask import Flask, request
 from dotenv import load_dotenv
 
-from telegram import Update, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -22,60 +22,89 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 # Flask-приложение
 flask_app = Flask(__name__)
+
+# Telegram-приложение
 application = Application.builder().token(TOKEN).build()
 
-# Состояния пользователя
-user_state = {}
-user_inputs = {}
+# Данные пользователей
+user_data = {}
+
+# Темы
+topics = [
+    "1. Общая информация о тебе",
+    "2. Тотемное животное",
+    "3. Финансы",
+    "4. Бизнес",
+    "5. Предназначение",
+    "6. Доходы",
+    "7. Отношения",
+    "8. Жизненный период",
+    "9. Меня интересует всё",
+]
+
+# Отправка длинного сообщения по частям
+async def send_long_message(text, update):
+    MAX_LENGTH = 4096
+    for i in range(0, len(text), MAX_LENGTH):
+        await update.message.reply_text(text[i:i+MAX_LENGTH])
 
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    user_state[user_id] = "name"
-    user_inputs[user_id] = {}
-    await update.message.reply_text("Привет! Я астробот 🌟\nДавай составим твою натальную карту.\n\nКак тебя зовут?")
+    user_data[user_id] = {"step": "name"}
+    await update.message.reply_text("Привет! Я астробот.\nКак тебя зовут?")
 
-# Обработка сообщений
+# Обработка всех сообщений
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    state = user_state.get(user_id)
+    if user_id not in user_data:
+        await start(update, context)
+        return
 
-    if state == "name":
-        user_inputs[user_id]["name"] = text
-        user_state[user_id] = "birth_date"
-        await update.message.reply_text("Отлично! Теперь укажи дату рождения (ДД.ММ.ГГГГ):")
+    state = user_data[user_id]
 
-    elif state == "birth_date":
-        user_inputs[user_id]["birth_date"] = text
-        user_state[user_id] = "birth_time"
-        await update.message.reply_text("Спасибо! Укажи время рождения (например, 14:30):")
-
-    elif state == "birth_time":
-        user_inputs[user_id]["birth_time"] = text
-        user_state[user_id] = "birth_place"
-        await update.message.reply_text("И последнее — укажи место рождения:")
-
-    elif state == "birth_place":
-        user_inputs[user_id]["birth_place"] = text
-        user_state[user_id] = "done"
-        await update.message.reply_text("Спасибо! Готовлю твой астрологический анализ... 🔮", reply_markup=ReplyKeyboardRemove())
-        await generate_astrology_response(update, context, user_id)
-
+    if state.get("step") == "name":
+        state["name"] = text
+        state["step"] = "date"
+        await update.message.reply_text("Укажи дату рождения (ДД.ММ.ГГГГ):")
+    elif state.get("step") == "date":
+        state["birth_date"] = text
+        state["step"] = "time"
+        await update.message.reply_text("Теперь время рождения (например, 14:30):")
+    elif state.get("step") == "time":
+        state["birth_time"] = text
+        state["step"] = "place"
+        await update.message.reply_text("Где ты родился? Укажи город или населённый пункт:")
+    elif state.get("step") == "place":
+        state["birth_place"] = text
+        state["step"] = "topic"
+        reply_keyboard = [[topics[i], topics[i + 1], topics[i + 2]] for i in range(0, len(topics), 3)]
+        await update.message.reply_text(
+            "Спасибо! Теперь выбери интересующую тему:",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        )
+    elif state.get("step") == "topic":
+        if text in topics:
+            state["selected_topic"] = text[3:]
+            await generate_astrology_response(update, context, user_id)
+        else:
+            await update.message.reply_text("Пожалуйста, выбери тему из списка.")
     else:
-        await update.message.reply_text("Пожалуйста, начни с команды /start, чтобы получить персональный анализ.")
+        await update.message.reply_text("Что-то пошло не так. Напиши /start чтобы начать сначала.")
 
-# Генерация запроса к OpenRouter
-async def generate_astrology_response(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    info = user_inputs[user_id]
+# Генерация астрологического ответа
+async def generate_astrology_response(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id):
+    state = user_data[user_id]
     prompt = (
-        f"Ты — профессиональный астролог. Сделай подробный астрологический анализ для пользователя по следующим данным:\n"
-        f"Имя: {info['name']}\n"
-        f"Дата рождения: {info['birth_date']}\n"
-        f"Время рождения: {info['birth_time']}\n"
-        f"Место рождения: {info['birth_place']}\n"
-        f"Подробно расскажи о характере, жизненном пути, предрасположенностях и рекомендациях для будущего."
+        f"Ты — профессиональный астролог. Вот данные пользователя:\n"
+        f"Имя: {state['name']}\n"
+        f"Дата рождения: {state['birth_date']}\n"
+        f"Время рождения: {state['birth_time']}\n"
+        f"Место рождения: {state['birth_place']}\n"
+        f"Тема: {state['selected_topic']}\n\n"
+        f"Составь развернутую, дружелюбную, понятную и полезную астрологическую консультацию."
     )
 
     try:
@@ -89,7 +118,7 @@ async def generate_astrology_response(update: Update, context: ContextTypes.DEFA
         payload = {
             "model": "meta-llama/llama-3-8b-instruct",
             "messages": [
-                {"role": "system", "content": "Ты — профессиональный астролог-бот."},
+                {"role": "system", "content": "Ты — опытный астролог."},
                 {"role": "user", "content": prompt}
             ]
         }
@@ -108,17 +137,18 @@ async def generate_astrology_response(update: Update, context: ContextTypes.DEFA
         traceback.print_exc()
         reply_text = "Произошла непредвиденная ошибка 😢"
 
-    await update.message.reply_text(reply_text)
+    await send_long_message(reply_text, update)
 
 # Webhook
 @flask_app.route("/webhook", methods=["POST"])
-def webhook():
+def webhook() -> str:
     update = Update.de_json(request.get_json(force=True), application.bot)
     application.update_queue.put(update)
     return "OK", 200
 
+# Проверка
 @flask_app.route("/", methods=["GET"])
-def index():
+def index() -> str:
     return "Бот работает.", 200
 
 # Хендлеры
