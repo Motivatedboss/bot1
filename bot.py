@@ -19,8 +19,10 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
 openai.api_key = OPENAI_API_KEY
-print("OPENAI_API_KEY:", OPENAI_API_KEY)
+if not OPENAI_API_KEY:
+    print("❌ OPENAI_API_KEY is missing!")
 
 # Flask-приложение
 flask_app = Flask(__name__)
@@ -46,7 +48,9 @@ topics = [
 
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! Я астробот.\nНапиши, пожалуйста, свою дату рождения (в формате ДД.ММ.ГГГГ):")
+    await update.message.reply_text(
+        "Привет! Я астробот.\nНапиши, пожалуйста, свою дату рождения (в формате ДД.ММ.ГГГГ):"
+    )
 
 # Обработка сообщений
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -55,7 +59,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if user_id not in user_data:
         user_data[user_id] = text
-        reply_keyboard = [[topics[i], topics[i + 1], topics[i + 2]] for i in range(0, len(topics), 3)]
+        reply_keyboard = [
+            [topics[i], topics[i + 1], topics[i + 2]] for i in range(0, len(topics), 3)
+        ]
         await update.message.reply_text(
             "Спасибо! Теперь выбери интересующую тему:",
             reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
@@ -70,20 +76,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             try:
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "Ты — астролог-бот."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.7,
-        max_tokens=700
-    )
-    reply_text = response["choices"][0]["message"]["content"]
-
-except Exception as e:
-    traceback.print_exc()  # ← покажет в логах Render подробности
-    reply_text = "Произошла ошибка при обращении к OpenAI 😔"
+                response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "Ты — астролог-бот."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=700
+                )
+                reply_text = response["choices"][0]["message"]["content"]
+            except Exception as e:
+                traceback.print_exc()
+                reply_text = "Произошла ошибка при обращении к OpenAI 😔"
 
             await update.message.reply_text(reply_text)
         else:
