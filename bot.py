@@ -60,7 +60,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         if text in topics:
-            selected_topic = text[3:]  # убираем номер
+            selected_topic = text[3:]
             dob = user_data.get(user_id, "неизвестна")
             prompt = (
                 f"Ты — профессиональный астролог. Пользователь родился {dob}. "
@@ -72,11 +72,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 headers = {
                     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                     "Content-Type": "application/json",
-                    "HTTP-Referer": "https://yourdomain.com",  # при необходимости укажи свой сайт
+                    # "HTTP-Referer": "https://bot1-fn4q.onrender.com",  # Убери или замени на свой домен
                     "X-Title": "AstroBot"
                 }
                 payload = {
-                    "model": "openai/gpt-3.5-turbo",  # можно сменить на любую доступную модель OpenRouter
+                    "model": "meta-llama/llama-3-8b-instruct",  # Убедись, что модель тебе доступна
                     "messages": [
                         {"role": "system", "content": "Ты — астролог-бот."},
                         {"role": "user", "content": prompt}
@@ -85,6 +85,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 async with aiohttp.ClientSession() as session:
                     async with session.post(url, headers=headers, json=payload) as resp:
+                        print("Статус ответа OpenRouter:", resp.status)
                         if resp.status == 200:
                             data = await resp.json()
                             reply_text = data["choices"][0]["message"]["content"]
@@ -101,14 +102,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("Пожалуйста, выбери тему из предложенного списка.")
 
-# Webhook для Telegram
+# Webhook
 @flask_app.route("/webhook", methods=["POST"])
 def webhook() -> str:
     update = Update.de_json(request.get_json(force=True), application.bot)
     application.update_queue.put(update)
     return "OK", 200
 
-# Проверка статуса
 @flask_app.route("/", methods=["GET"])
 def index() -> str:
     return "Бот работает.", 200
